@@ -1,0 +1,366 @@
+import streamlit as st
+
+st.set_page_config(page_title="Cara a Cara", page_icon="🎯", layout="centered")
+
+DEFAULT_QUESTIONS = [
+    "Una noche perfecta es...",
+    "Si les regalan un viaje sorpresa, prefieren...",
+    "Ante un conflicto, primero...",
+    "Comida para compartir sin pensarlo dos veces:",
+    "Un sábado libre ideal empieza con...",
+    "Al elegir película, van primero por...",
+    "Su forma favorita de mostrar cariño:",
+    "Si se mudaran mañana, elegirían...",
+    "Su mascota ideal sería...",
+    "Lo que más los estresa:",
+]
+
+PLAYERS = {"juan": "Juan", "andre": "Andre"}
+EMOJI = {"juan": "🔵", "andre": "🟠"}
+OTHER = {"juan": "andre", "andre": "juan"}
+
+VERDICTS = [
+    (0.9, "Prácticamente la misma persona."),
+    (0.7, "Muy en sintonía."),
+    (0.5, "Se parecen más de lo que creen."),
+    (0.3, "Bastante distintos, y está bien."),
+    (0.0, "Polos opuestos — ahí está lo interesante."),
+]
+
+
+# ---------------------------------------------------------------- state ----
+
+def init_state():
+    defaults = {
+        "screen": "menu",              # menu | quiz | done | results
+        "questions": DEFAULT_QUESTIONS,
+        "using_custom": False,
+        "answers": {"juan": [], "andre": []},
+        "active_player": None,
+        "q_index": 0,
+        "compare_warning": None,
+        "qset_message": None,
+        "confirm_retake": None,        # "juan" | "andre" | None
+        "resume_at": {"juan": None, "andre": None},
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+    for player in ("juan", "andre"):
+        st.session_state.resume_at.setdefault(player, None)
+
+    questions = st.session_state.questions
+    if questions and isinstance(questions[0], dict):
+        st.session_state.questions = [q["q"] for q in questions]
+        st.session_state.answers = {"juan": [], "andre": []}
+        clear_answer_keys()
+
+
+def is_complete(player):
+    answers = st.session_state.answers[player]
+    return len(answers) >= len(st.session_state.questions) and all(str(a).strip() for a in answers)
+
+
+def both_complete():
+    return is_complete("juan") and is_complete("andre")
+
+
+def clear_answer_keys(player=None):
+    prefix = f"answer_{player}_" if player else "answer_"
+    for key in list(st.session_state.keys()):
+        if key.startswith(prefix):
+            del st.session_state[key]
+
+
+def parse_questions_txt(text):
+    """One question per line. Anything after a | is ignored."""
+    questions = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        question = line.split("|", 1)[0].strip()
+        if question:
+            questions.append(question)
+    return questions
+
+
+def same_answer(a, b):
+    def norm(value):
+        return " ".join(str(value).strip().lower().split())
+
+    return norm(a) == norm(b)
+
+
+def match_summary():
+    questions = st.session_state.questions
+    ans_juan = st.session_state.answers["juan"]
+    ans_andre = st.session_state.answers["andre"]
+    matches = sum(1 for i in range(len(questions)) if same_answer(ans_juan[i], ans_andre[i]))
+    ratio = matches / len(questions) if questions else 0
+    verdict = next(text for threshold, text in VERDICTS if ratio >= threshold)
+    return matches, verdict
+
+
+def build_answers_txt():
+    questions = st.session_state.questions
+    ans_juan = st.session_state.answers["juan"]
+    ans_andre = st.session_state.answers["andre"]
+    matches, verdict = match_summary()
+    lines = [
+        "Cara a Cara",
+        f"{matches}/{len(questions)} respuestas iguales",
+        verdict,
+        "",
+    ]
+    for i, question in enumerate(questions):
+        lines.append(f"{i + 1}. {question}")
+        lines.append(f"Juan: {ans_juan[i]}")
+        lines.append(f"Andre: {ans_andre[i]}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_download():
+    st.download_button(
+        "Descargar respuestas (.txt)",
+        data=build_answers_txt(),
+        file_name="cara-a-cara.txt",
+        mime="text/plain",
+        use_container_width=True,
+        key="download_answers",
+    )
+
+
+# --------------------------------------------------------------- screens ----
+
+def start_quiz(player):
+    clear_answer_keys(player)
+    st.session_state.answers[player] = []
+    st.session_state.resume_at[player] = None
+    st.session_state.q_index = 0
+    st.session_state.active_player = player
+    st.session_state.screen = "quiz"
+
+
+def resume_quiz(player):
+    n = len(st.session_state.questions)
+    idx = st.session_state.resume_at[player] or 0
+    st.session_state.q_index = min(max(idx, 0), n - 1)
+    st.session_state.active_player = player
+    st.session_state.screen = "quiz"
+
+
+def render_menu():
+    n = len(st.session_state.questions)
+    st.title("Cara × Cara")
+    st.caption(f"{n} preguntas cada quien, sin ver las respuestas del otro. Cuando ambos hayan terminado, comparen.")
+
+    col_juan, col_andre = st.columns(2)
+    for col, key in zip((col_juan, col_andre), ("juan", "andre")):
+        with col:
+            done = is_complete(key)
+            paused_at = st.session_state.resume_at[key]
+            if done:
+                label = f"{EMOJI[key]} {PLAYERS[key]} ✅"
+            elif paused_at is not None:
+                label = f"{EMOJI[key]} {PLAYERS[key]} · continuar"
+            else:
+                label = f"{EMOJI[key]} {PLAYERS[key]}"
+            if st.button(label, key=f"start_{key}", use_container_width=True):
+                if done:
+                    st.session_state.confirm_retake = key
+                elif paused_at is not None:
+                    resume_quiz(key)
+                    st.rerun()
+                else:
+                    start_quiz(key)
+                    st.rerun()
+            if not done and paused_at is not None:
+                st.caption(f"Pausado en la pregunta {paused_at + 1} de {n}")
+
+    if st.session_state.confirm_retake:
+        key = st.session_state.confirm_retake
+        st.warning(f"{PLAYERS[key]} ya respondió. ¿Volver a responder? Se borrarán las respuestas guardadas.")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Sí, volver a responder", key="confirm_yes", use_container_width=True):
+                st.session_state.confirm_retake = None
+                start_quiz(key)
+                st.rerun()
+        with c2:
+            if st.button("Cancelar", key="confirm_no", use_container_width=True):
+                st.session_state.confirm_retake = None
+                st.rerun()
+
+    st.divider()
+    if st.button("Comparar respuestas", type="primary", use_container_width=True):
+        if both_complete():
+            st.session_state.screen = "results"
+            st.session_state.compare_warning = None
+            st.rerun()
+        else:
+            missing = [PLAYERS[k] for k in ("juan", "andre") if not is_complete(k)]
+            if len(missing) == 2:
+                st.session_state.compare_warning = f"Juan y Andre todavía no responden sus {n} preguntas."
+            else:
+                st.session_state.compare_warning = f"Falta que {missing[0]} termine sus {n} preguntas antes de comparar."
+
+    if st.session_state.compare_warning:
+        st.info(st.session_state.compare_warning)
+
+    if both_complete():
+        render_download()
+
+    st.divider()
+    with st.expander("Usar mis propias preguntas (.txt)"):
+        st.caption("Una pregunta por línea. Cada quien escribe su respuesta con sus propias palabras.")
+        st.code("¿Playa o montaña?\n¿Qué harían un sábado libre?", language=None)
+
+        uploaded = st.file_uploader("Sube tu archivo .txt", type="txt", key="qset_uploader")
+        if uploaded is not None:
+            text = uploaded.read().decode("utf-8", errors="ignore")
+            parsed = parse_questions_txt(text)
+            if len(parsed) < 2:
+                st.error("No se pudo leer el archivo. Escribe al menos 2 preguntas, una por línea.")
+            else:
+                st.session_state.questions = parsed
+                st.session_state.using_custom = True
+                st.session_state.answers = {"juan": [], "andre": []}
+                st.session_state.resume_at = {"juan": None, "andre": None}
+                clear_answer_keys()
+                st.success(f"Cargadas {len(parsed)} preguntas personalizadas desde “{uploaded.name}”.")
+
+        if st.session_state.using_custom:
+            if st.button("Volver a las preguntas originales"):
+                st.session_state.questions = DEFAULT_QUESTIONS
+                st.session_state.using_custom = False
+                st.session_state.answers = {"juan": [], "andre": []}
+                st.session_state.resume_at = {"juan": None, "andre": None}
+                clear_answer_keys()
+                st.rerun()
+
+
+def render_quiz():
+    player = st.session_state.active_player
+    questions = st.session_state.questions
+    idx = st.session_state.q_index
+    question = questions[idx]
+    answer_key = f"answer_{player}_{idx}"
+    saved = st.session_state.answers[player]
+    if answer_key not in st.session_state and idx < len(saved):
+        st.session_state[answer_key] = saved[idx]
+
+    st.subheader(f"{EMOJI[player]} Turno de {PLAYERS[player]}")
+    st.progress(idx / len(questions))
+    st.caption(f"Pregunta {idx + 1} de {len(questions)}")
+
+    st.markdown(f"### {question}")
+    st.caption("Escribe lo que quieras.")
+    answer = st.text_area(
+        "Tu respuesta",
+        key=answer_key,
+        label_visibility="collapsed",
+        placeholder="Tu respuesta...",
+        height=120,
+    )
+
+    def save_current():
+        answers = st.session_state.answers[player]
+        if len(answers) <= idx:
+            answers.extend([""] * (idx + 1 - len(answers)))
+        answers[idx] = answer.strip()
+
+    col_back, col_next = st.columns(2)
+    with col_back:
+        if st.button("Atrás", disabled=(idx == 0), use_container_width=True):
+            save_current()
+            st.session_state.q_index -= 1
+            st.rerun()
+    with col_next:
+        is_last = idx == len(questions) - 1
+        if st.button("Terminar" if is_last else "Siguiente",
+                      type="primary", disabled=not answer.strip(), use_container_width=True):
+            save_current()
+            if is_last:
+                st.session_state.resume_at[player] = None
+                st.session_state.screen = "done"
+            else:
+                st.session_state.q_index += 1
+            st.rerun()
+
+    if st.button("Pausar", use_container_width=True):
+        save_current()
+        st.session_state.resume_at[player] = idx
+        st.session_state.screen = "menu"
+        st.rerun()
+
+
+def render_done():
+    player = st.session_state.active_player
+    other = OTHER[player]
+
+    st.success(f"¡Listo, {PLAYERS[player]}!")
+    if is_complete(other):
+        st.write("Tus respuestas quedaron guardadas. Ya pueden comparar o descargar el archivo.")
+        render_download()
+    else:
+        st.write(f"Tus respuestas quedaron guardadas. Cuando {PLAYERS[other]} también termine, "
+                 f"vuelvan aquí y toquen **Comparar respuestas**.")
+
+    if st.button("Volver al menú", type="primary", use_container_width=True):
+        st.session_state.screen = "menu"
+        st.rerun()
+
+
+def render_results():
+    questions = st.session_state.questions
+    ans_juan = st.session_state.answers["juan"]
+    ans_andre = st.session_state.answers["andre"]
+    matches, verdict = match_summary()
+
+    st.markdown(f"<h1 style='text-align:center'>{matches}/{len(questions)}</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center'>respuestas iguales</p>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='text-align:center'>{verdict}</h3>", unsafe_allow_html=True)
+
+    st.divider()
+
+    for i, question in enumerate(questions):
+        match = same_answer(ans_juan[i], ans_andre[i])
+        with st.container(border=True):
+            st.caption(question)
+            c1, c2, c3 = st.columns([5, 1, 5])
+            with c1:
+                st.markdown(f"**{EMOJI['juan']} Juan**")
+                st.text(ans_juan[i])
+            c2.markdown("<p style='text-align:center'>✅</p>" if match else "<p style='text-align:center'>❌</p>",
+                        unsafe_allow_html=True)
+            with c3:
+                st.markdown(f"**Andre {EMOJI['andre']}**")
+                st.text(ans_andre[i])
+
+    st.divider()
+    render_download()
+    if st.button("Empezar de nuevo", use_container_width=True):
+        st.session_state.answers = {"juan": [], "andre": []}
+        st.session_state.resume_at = {"juan": None, "andre": None}
+        st.session_state.active_player = None
+        st.session_state.q_index = 0
+        st.session_state.screen = "menu"
+        clear_answer_keys()
+        st.rerun()
+
+
+# ----------------------------------------------------------------- main ----
+
+init_state()
+
+screen = st.session_state.screen
+if screen == "menu":
+    render_menu()
+elif screen == "quiz":
+    render_quiz()
+elif screen == "done":
+    render_done()
+elif screen == "results":
+    render_results()
