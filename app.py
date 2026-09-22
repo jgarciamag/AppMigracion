@@ -296,31 +296,50 @@ def same_answer(a, b):
     return norm(a) == norm(b)
 
 
+def answer_at(player, index):
+    answers = st.session_state.answers[player]
+    if index < len(answers) and str(answers[index]).strip():
+        return str(answers[index]).strip()
+    return ""
+
+
 def match_summary():
     questions = st.session_state.questions
-    ans_juan = st.session_state.answers["juan"]
-    ans_andre = st.session_state.answers["andre"]
-    matches = sum(1 for i in range(len(questions)) if same_answer(ans_juan[i], ans_andre[i]))
-    ratio = matches / len(questions) if questions else 0
-    verdict = next(text for threshold, text in VERDICTS if ratio >= threshold)
-    return matches, verdict
+    compared = 0
+    matches = 0
+    for i in range(len(questions)):
+        juan = answer_at("juan", i)
+        andre = answer_at("andre", i)
+        if not juan or not andre:
+            continue
+        compared += 1
+        if same_answer(juan, andre):
+            matches += 1
+    ratio = matches / compared if compared else 0
+    if compared == 0:
+        verdict = "Todavía no hay una pregunta contestada por los dos."
+    else:
+        verdict = next(text for threshold, text in VERDICTS if ratio >= threshold)
+        if compared < len(questions):
+            verdict = f"{verdict} Van {compared} de {len(questions)}."
+    return matches, compared, verdict
 
 
 def build_answers_txt():
     questions = st.session_state.questions
-    ans_juan = st.session_state.answers["juan"]
-    ans_andre = st.session_state.answers["andre"]
-    matches, verdict = match_summary()
+    matches, compared, verdict = match_summary()
     lines = [
         "Cara a Cara",
-        f"{matches}/{len(questions)} respuestas iguales",
+        f"{matches}/{compared} respuestas iguales, de {len(questions)} preguntas",
         verdict,
         "",
     ]
     for i, question in enumerate(questions):
+        juan = answer_at("juan", i) or "(sin respuesta)"
+        andre = answer_at("andre", i) or "(sin respuesta)"
         lines.append(f"{i + 1}. {question}")
-        lines.append(f"Juan: {ans_juan[i]}")
-        lines.append(f"Andre: {ans_andre[i]}")
+        lines.append(f"Juan: {juan}")
+        lines.append(f"Andre: {andre}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -421,19 +440,10 @@ def render_menu():
 
     st.divider()
     if st.button("Comparar respuestas", type="primary", use_container_width=True):
-        if both_complete():
-            st.session_state.screen = "results"
-            st.session_state.compare_warning = None
-            st.rerun()
-        else:
-            missing = [PLAYERS[k] for k in ("juan", "andre") if not is_complete(k)]
-            if len(missing) == 2:
-                st.session_state.compare_warning = f"Juan y Andre todavía no responden sus {n} preguntas."
-            else:
-                st.session_state.compare_warning = f"Falta que {missing[0]} termine sus {n} preguntas antes de comparar."
-
-    if st.session_state.compare_warning:
-        st.info(st.session_state.compare_warning)
+        apply_store()
+        st.session_state.screen = "results"
+        st.session_state.compare_warning = None
+        st.rerun()
 
     if st.button("Reiniciar test", use_container_width=True):
         st.session_state.confirm_reset = True
@@ -571,15 +581,10 @@ def render_quiz():
 
 def render_done():
     player = st.session_state.active_player
-    other = OTHER[player]
 
     st.success(f"¡Listo, {PLAYERS[player]}!")
-    if is_complete(other):
-        st.write("Tus respuestas quedaron guardadas. Ya pueden comparar o descargar el archivo.")
-        render_download()
-    else:
-        st.write(f"Tus respuestas quedaron guardadas. Cuando {PLAYERS[other]} también termine, "
-                 f"vuelvan aquí y toquen **Comparar respuestas**.")
+    st.write("Tus respuestas quedaron guardadas. Desde el menú pueden comparar y descargar el archivo en cualquier momento.")
+    render_download()
 
     if st.button("Volver al menú", type="primary", use_container_width=True):
         st.session_state.screen = "menu"
@@ -588,29 +593,29 @@ def render_done():
 
 def render_results():
     questions = st.session_state.questions
-    ans_juan = st.session_state.answers["juan"]
-    ans_andre = st.session_state.answers["andre"]
-    matches, verdict = match_summary()
+    matches, compared, verdict = match_summary()
 
-    st.markdown(f"<h1 style='text-align:center'>{matches}/{len(questions)}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='text-align:center'>{matches}/{compared or len(questions)}</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center'>respuestas iguales</p>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='text-align:center'>{verdict}</h3>", unsafe_allow_html=True)
 
     st.divider()
 
     for i, question in enumerate(questions):
-        match = same_answer(ans_juan[i], ans_andre[i])
+        juan = answer_at("juan", i)
+        andre = answer_at("andre", i)
+        match = bool(juan and andre and same_answer(juan, andre))
         with st.container(border=True):
             st.caption(question)
             c1, c2, c3 = st.columns([5, 1, 5])
             with c1:
                 st.markdown(f"**{EMOJI['juan']} Juan**")
-                st.text(ans_juan[i])
+                st.text(juan or "Sin respuesta")
             c2.markdown("<p style='text-align:center'>✅</p>" if match else "<p style='text-align:center'>❌</p>",
                         unsafe_allow_html=True)
             with c3:
                 st.markdown(f"**Andre {EMOJI['andre']}**")
-                st.text(ans_andre[i])
+                st.text(andre or "Sin respuesta")
 
     st.divider()
     render_download()
