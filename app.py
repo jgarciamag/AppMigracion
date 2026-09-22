@@ -41,9 +41,12 @@ def owner_pin():
     if env_pin:
         return env_pin
     try:
-        return str(st.secrets["OWNER_PIN"]).strip()
+        secret = str(st.secrets["OWNER_PIN"]).strip()
+        if secret:
+            return secret
     except Exception:
-        return ""
+        pass
+    return "cara7194"
 
 
 def empty_player():
