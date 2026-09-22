@@ -6,7 +6,7 @@ from pathlib import Path
 
 import streamlit as st
 
-st.set_page_config(page_title="Cara a Cara", page_icon="🎯", layout="centered")
+st.set_page_config(page_title="Preguntas Migración", page_icon="🛂", layout="centered")
 
 DEFAULT_QUESTIONS = [
     "Una noche perfecta es...",
@@ -238,6 +238,7 @@ def init_state():
         "compare_warning": None,
         "qset_message": None,
         "confirm_retake": None,        # "juan" | "andre" | None
+        "confirm_reset": False,
         "resume_at": {"juan": None, "andre": None},
     }
     for key, value in defaults.items():
@@ -361,6 +362,7 @@ def reset_all_progress():
     st.session_state.q_index = 0
     st.session_state.screen = "menu"
     st.session_state.confirm_retake = None
+    st.session_state.confirm_reset = False
     clear_answer_keys()
     save_all()
 
@@ -429,6 +431,26 @@ def render_menu():
 
     if st.session_state.compare_warning:
         st.info(st.session_state.compare_warning)
+
+    if st.button("Reiniciar test", use_container_width=True):
+        st.session_state.confirm_reset = True
+
+    if st.session_state.confirm_reset:
+        st.warning("Esto borra las respuestas de Juan y Andre.")
+        pin = st.text_input("Clave", type="password", key="reset_menu_pin")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Borrar y reiniciar", key="reset_menu_yes", use_container_width=True):
+                if pin_matches(pin):
+                    st.session_state.confirm_reset = False
+                    reset_all_progress()
+                    st.rerun()
+                else:
+                    st.error("Clave incorrecta.")
+        with c2:
+            if st.button("Cancelar", key="reset_menu_no", use_container_width=True):
+                st.session_state.confirm_reset = False
+                st.rerun()
 
     if both_complete():
         render_download()
